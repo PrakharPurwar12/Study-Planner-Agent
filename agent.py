@@ -129,7 +129,25 @@ def run_agent_llm(user_message):
             final_text = (msg.content or "").strip()
             break
 
-        messages.append(msg.model_dump())
+        # build the assistant message manually instead of msg.model_dump() -
+        # model_dump() includes extra OpenAI-only fields (like "annotations")
+        # that Groq's API rejects on the next turn, so we only send back
+        # the fields every OpenAI-compatible API actually needs
+        messages.append({
+            "role": "assistant",
+            "content": msg.content,
+            "tool_calls": [
+                {
+                    "id": call.id,
+                    "type": "function",
+                    "function": {
+                        "name": call.function.name,
+                        "arguments": call.function.arguments,
+                    },
+                }
+                for call in tool_calls
+            ],
+        })
 
         for call in tool_calls:
             call_input = json.loads(call.function.arguments or "{}")

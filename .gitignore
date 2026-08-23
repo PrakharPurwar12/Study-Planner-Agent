@@ -1,3 +1,7 @@
 .env
 __pycache__/
 study_memory.json
+myenv/
+*.pyc
+.ipynb_checkpoints/
+.venv/

@@ -50,7 +50,3 @@ cp .env.example .env
 jupyter notebook study_planner_demo.ipynb
 ```
 
-## Who did what
-- _______________: _______________
-- _______________: _______________
-- _______________: _______________

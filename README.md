@@ -2,6 +2,46 @@
 
 **Repo:** https://github.com/PrakharPurwar12/Study-Planner-Agent
 
+---
+
+## Overview
+
+Study Planner Agent is a lightweight agentic system that turns a list of deadlines into an
+actionable, day-by-day study schedule. Rather than generating a static plan from a single prompt,
+the system operates as a genuine tool-using agent: it holds a persistent memory of tasks across
+turns, calls real functions to add tasks and build schedules, and adapts its next action based on
+the outcome of each tool call — including automatically re-planning when an urgent deadline is
+introduced. The project is built to demonstrate the core principles of agentic AI (planning,
+tool use, memory, and adaptive decision-making) in a small, auditable codebase, with a real LLM
+(via Groq or Azure OpenAI, OpenAI-compatible function calling) driving the agent's decisions and
+a deterministic rule-based fallback ensuring the system remains fully functional offline.
+
+## Agent flow
+
+```mermaid
+flowchart TD
+    A[User request] --> B{Agent decides which tool to call}
+    B -->|add a task| C[add_task tool]
+    B -->|build/rebuild plan| D[build_schedule tool]
+    C --> E[Tool result returned<br/>to agent]
+    D --> E
+    E --> F{Result reviewed:<br/>urgent task or<br/>more steps needed?}
+    F -->|Yes, e.g. urgent flag| B
+    F -->|No, done| G[Final answer<br/>returned to user]
+
+    subgraph Memory[" "]
+        H[(study_memory.json)]
+    end
+
+    C -.saves task.-> H
+    D -.reads all tasks.-> H
+```
+
+*The loop above repeats until the agent has no further action to take — each decision is made
+after seeing the real result of the previous tool call, not from a fixed script.*
+
+---
+
 **Goal:** plan study blocks around real deadlines, so tasks actually get studied for before
 they're due instead of just sitting on a to-do list.
 

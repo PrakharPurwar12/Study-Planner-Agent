@@ -1,134 +1,115 @@
-# Study Planner Agent
+# Study Planner Agent — CSE476 CA1, Topic T24
 
-This project is a small agentic study planner. The main idea is simple: the user gives a goal like adding tasks or asking for a study plan, and the agent decides what to do next instead of just producing text. The project is built around real deadlines and task management, so the agent has to interact with actual tools and stored memory instead of handling everything in one prompt.
+**Repo:** https://github.com/PrakharPurwar12/Study-Planner-Agent
 
-## What it does
+**Goal:** plan study blocks around real deadlines, so tasks actually get studied for before
+they're due instead of just sitting on a to-do list.
 
-The agent helps plan study time around assignment and exam deadlines. A user can add tasks with a date, and the system will build a study schedule that looks at all existing tasks and their due dates. It is meant to be a practical assignment project focused on agent behavior, tool use, and memory persistence.
+**The two tools** are `add_task(name, due)`, which saves a task and its deadline, and
+`build_schedule()`, which looks at every task currently in memory and builds a day-by-day study
+plan around their deadlines. The agent only acts through these two functions — it never invents
+a schedule on its own, and both tools are called for real, with real results feeding back into
+the agent's next decision (shown in the notebook trace).
 
-## Why this is an agent, not a normal chatbot
+**Memory** is a plain JSON file (`study_memory.json`, handled by `memory.py`). Every task and its
+deadline gets written there when `add_task` runs, and `build_schedule` reads the whole file back
+when it runs later, so tasks added in one turn are still there and get used in a later turn's
+schedule. The notebook proves this by loading the task list from a completely separate Python
+process, not just a variable held in memory during one session. This file is generated at
+runtime and is not part of the submitted code (it's excluded via `.gitignore`).
 
-This is not just a chat model replying with a schedule. The code in `agent.py` implements a plan-act loop:
+**One honest failure:** when too many tasks pile up on the same day(s), there just isn't enough
+study-hour capacity to fit everyone before their deadline. Instead of faking a schedule that looks
+fine, `planner.py` schedules whatever hours actually fit and reports the shortfall, e.g. `'Task C'
+only got 0/4 study hours before its deadline — not enough time, schedule is tight/impossible`.
+An honest partial plan is more useful than a schedule that silently doesn't work, so this is left
+as a visible warning rather than hidden or smoothed over.
 
-User goal → agent decides action → tool call → tool result → next decision → final response
+---
 
-The agent checks the result of a tool and then decides whether to do another action. For example, after adding a task, it may decide that the task is urgent and rebuild the schedule. That decision depends on the actual result returned by the tool, not a hardcoded script.
+## How the agent works, step by step
 
-## The actual tools
+This section walks through exactly what happens when a request comes in, so it's easy to follow
+without needing to read the code line by line first.
 
-The project currently defines two real tools in `tools.py`:
+1. **A request comes in** (e.g. "add task DBMS assignment due 2026-08-27").
+2. **The agent decides which tool to call.** This decision is made by a real LLM using
+   OpenAI-style function calling (see "LLM configuration" below). The model is given the two
+   tool definitions and decides on its own whether to call `add_task`, `build_schedule`, or both.
+3. **The tool actually runs.** `add_task` validates the date, checks for duplicates and past
+   dates, and saves the task to `study_memory.json`. `build_schedule` reads every task from
+   memory and hands it to the scheduling logic in `planner.py`.
+4. **The tool's real result is sent back to the model.** This includes things like whether the
+   task is urgent (`due` within 2 days), how many hours got scheduled, and any warnings.
+5. **The agent decides the next step based on that result** — not a scripted sequence. For
+   example, if a task comes back flagged as urgent, the agent calls `build_schedule()` again on
+   its own to re-plan the whole schedule around it, even if a schedule was already built earlier
+   in the conversation.
+6. **This repeats until there's nothing left to do**, and the agent gives a short final answer
+   (the schedule, or a clear explanation of a problem like a duplicate task or an impossible
+   deadline).
 
-### 1. add_task(name, due)
+This decide → act → observe → decide loop (visible as `[agent decision]`, `[tool call]`,
+`[tool result]`, `[next decision]`, `[final answer]` in the notebook trace) is what makes this an
+agent rather than a chatbot: the model's second decision is genuinely shaped by what the first
+tool call returned.
 
-This function validates the task name and due date, rejects bad or past dates, checks for duplicate task names, and saves the task to persistent memory. It returns a JSON result including the task status and whether the task is urgent.
+## Extra feature: automatic re-plan on urgent tasks
 
-The agent uses this when the user asks to add tasks. Once the task is stored, the next step may be to build a schedule.
-
-### 2. build_schedule()
-
-This function loads all tasks from memory, calls the scheduling logic in `planner.py`, and returns study blocks with warnings if some deadlines are too tight. It is used when the agent wants to create or rebuild the plan based on the current task list.
-
-## Memory
-
-Memory is stored in `study_memory.json`, managed by `memory.py`.
-
-- `load_tasks()` reads the JSON file and returns the saved task list.
-- `save_tasks(tasks)` writes the list back to disk.
-- `clear_memory()` removes the file for demo reset purposes.
-
-Each task is stored as a JSON object with a task name and due date. This means earlier tasks are not lost when the agent continues with a later request. Later scheduling reads the persisted tasks again, so previous tasks continue to affect the next schedule that is built.
-
-## Agent implementation
-
-The main logic lives in `agent.py`.
-
-### LLM/tool-calling path
-
-If model keys are set, the agent uses the OpenAI Python client and supports two configuration paths:
-
-- Groq via `GROQ_API_KEY` and `GROQ_MODEL`
-- Azure OpenAI via `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT`, and `AZURE_OPENAI_API_VERSION`
-
-The agent sends a system prompt and the user goal to the model, then checks whether the model wants to call a tool. If it does, it executes the tool through `run_tool()`, appends the tool result to the conversation, and decides whether another action is needed.
-
-### Fallback path
-
-If no Groq or Azure variables are set, the project falls back to a rule-based path instead of calling an external model. This still uses the same tools and memory, so the project can still function in a simple offline mode.
-
-### Tool result → next decision
-
-Tool results influence the next step. In the fallback path, if a newly added task is urgent, the agent triggers `build_schedule()` again. In the LLM path, the tool result is included in the next reasoning step so the agent can decide whether more work is needed.
+Beyond the two required tools, the agent also re-plans proactively. If a newly added task's
+deadline is within 2 days, `add_task` flags it `urgent` in its result. The agent checks this flag
+and automatically calls `build_schedule()` again to rebuild the entire schedule around the new
+urgent deadline — not just slot the new task in on the side. This is demonstrated in Demo 3 of
+the notebook.
 
 ## Planner logic
 
-The scheduling logic in `planner.py` is simple but real.
-
-- It sorts tasks by deadline.
-- It checks how many days remain before the due date.
-- It assigns study blocks day by day up to the deadline, with a daily capacity limit.
-- It treats tasks due within a short window as urgent.
-- If there is not enough time before a deadline, it produces a warning instead of pretending the plan is fully feasible.
-
-This is the project’s honest failure mode: when multiple tasks are due too close together, the scheduler assigns what it can and reports the shortfall.
-
-## Notebook demo
-
-The notebook `study_planner_demo.ipynb` demonstrates the project end to end. It includes:
-
-- adding multiple tasks in one request
-- building a schedule after those tasks are added
-- proving memory persistence across turns by reading `study_memory.json` in a separate Python process
-- an urgent-task scenario where a new task triggers another schedule rebuild
-- a failure case where multiple tasks are due on the same day and the schedule warns about insufficient time
-
-The notebook uses trace lines such as:
-
-- agent decision
-- tool call
-- tool result
-- next decision
-- final answer
-
-This matches the project’s intended multi-step trace.
+`planner.py` contains the actual scheduling logic:
+- Tasks are sorted by deadline (earliest due date first = highest priority).
+- For each task, the planner walks forward day by day from today up to its deadline, allocating
+  up to 2 study hours per day per task, out of a shared 4-hours-per-day capacity across all tasks.
+- If a task runs out of days before it gets enough hours, the planner reports exactly how many
+  hours it managed versus how many were needed, instead of pretending the plan works.
 
 ## LLM configuration
 
-The current code supports these environment variables:
+The agent uses a real LLM with OpenAI-style function calling to decide which tool to call and
+when. It supports two interchangeable providers — whichever has credentials set in `.env` is
+used automatically:
 
 ```bash
+# Option 1: Groq (OpenAI-compatible chat completions API)
 GROQ_API_KEY=
-GROQ_MODEL=
+GROQ_MODEL=openai/gpt-oss-20b
 
+# Option 2: Azure/Microsoft Foundry
 AZURE_OPENAI_API_KEY=
 AZURE_OPENAI_ENDPOINT=
-AZURE_OPENAI_DEPLOYMENT=
-AZURE_OPENAI_API_VERSION=
+AZURE_OPENAI_DEPLOYMENT=gpt-4o-mini
+AZURE_OPENAI_API_VERSION=2024-10-21
 ```
 
-This project does not use GitHub Models or a `GITHUB_TOKEN` in the current implementation.
+If neither is set, `agent.py` runs a small rule-based decision function instead, so the project
+still works offline for a quick demo — it uses the exact same tools, memory, and planner code
+underneath, just with a simpler decision layer standing in for the LLM.
+
+## Project files
+
+- `agent.py` — the agent's decide → act → observe → decide loop (both the LLM path and the
+  offline fallback path)
+- `tools.py` — the two tools (`add_task`, `build_schedule`) and their input validation
+- `memory.py` — loads/saves tasks to `study_memory.json`
+- `planner.py` — deadline-based scheduling logic
+- `study_planner_demo.ipynb` — runnable demo notebook with a visible multi-step trace
+- `requirements.txt`, `.env.example` — dependencies and configuration template
 
 ## Setup and run
 
 ```bash
 pip install -r requirements.txt
 cp .env.example .env
-# fill in the values you want to use before running the model-backed agent path
+# fill in a GROQ_API_KEY (or Azure Foundry key + endpoint) for real LLM tool-calling
 jupyter notebook study_planner_demo.ipynb
 ```
 
-If no model credentials are set, the agent still works in its fallback mode using the same tools and memory logic.
-
-## Project structure
-
-- `agent.py` – agent decision logic and tool-calling flow
-- `tools.py` – the actual tool functions
-- `memory.py` – saves and loads persisted task memory
-- `planner.py` – deadline-based scheduling and urgent-task logic
-- `study_memory.json` – stored task data
-- `study_planner_demo.ipynb` – demonstration notebook
-- `requirements.txt` – project dependencies
-
-## Honest limitation
-
-One limitation already present in the project is that the planner does not invent a full feasible study plan when there is not enough time before a deadline. Instead, it schedules what fits and emits warnings for the shortfall. This is documented in the project and is treated as honest behavior rather than a fake success.
-
+Without any credentials set, the agent still runs end-to-end in its offline fallback mode.
